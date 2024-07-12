@@ -38,15 +38,19 @@ func NewProbe(influxURL, org, bucket, token string) (*Probe, error) {
 	return p, nil
 }
 
-func (p *Probe) Run(destination string) error {
+func (p *Probe) Run(destination, protocol string) error {
 	const op = "Probe.Run"
 
-	report, err := p.GenerateReport(destination)
+	if protocol != "IPv4" && protocol != "IPv6" {
+		return ez.New(op, ez.EINVALID, "Invalid protocol", nil)
+	}
+
+	report, err := p.GenerateReport(destination, protocol)
 	if err != nil {
 		return ez.Wrap(op, err)
 	}
 
-	err = p.Send(report)
+	err = p.Send(report, protocol)
 	if err != nil {
 		return ez.Wrap(op, err)
 	}
@@ -54,13 +58,23 @@ func (p *Probe) Run(destination string) error {
 	return nil
 }
 
-func (p *Probe) GenerateReport(destination string) (*mtr.Report, error) {
+func (p *Probe) GenerateReport(destination string, protocol string) (*mtr.Report, error) {
 	const op = "Probe.GenerateReport"
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
+	var protocolArg string
 
-	cmd := exec.Command("mtr", "-r", "-c", "10", "--json", destination)
+	switch protocol {
+	case "IPv4":
+		protocolArg = "-4"
+	case "IPv6":
+		protocolArg = "-6"
+	default:
+		return nil, ez.New(op, ez.EINVALID, "Invalid protocol", nil)
+	}
+
+	cmd := exec.Command("mtr", protocolArg, "-r", "-c", "10", "--json", destination)
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
@@ -69,7 +83,10 @@ func (p *Probe) GenerateReport(destination string) (*mtr.Report, error) {
 		return nil, ez.Wrap(op, err)
 	}
 
-	log.Info().Str("destination", destination).Msg("Ran MTR")
+	log.Info().
+		Str("destination", destination).
+		Str("protocol", protocol).
+		Msg("Ran MTR")
 
 	var res mtr.OutputJSON
 
@@ -83,7 +100,7 @@ func (p *Probe) GenerateReport(destination string) (*mtr.Report, error) {
 	return &res.Report, nil
 }
 
-func (p *Probe) Send(report *mtr.Report) error {
+func (p *Probe) Send(report *mtr.Report, protocol string) error {
 	const op = "Probe.Send"
 
 	// Get non-blocking write client
@@ -92,7 +109,7 @@ func (p *Probe) Send(report *mtr.Report) error {
 	// Create a new point using full params constructor
 	for i, hub := range report.Hubs {
 
-		point := influxdb2.NewPoint("probe",
+		point := influxdb2.NewPoint(protocol,
 			map[string]string{"source": report.MTR.Source, "destination": report.MTR.Destination, "host": hub.Host, "hop": strconv.Itoa(i)},
 			map[string]interface{}{
 				"number_of_tests": report.MTR.NumberOfTests,
@@ -121,7 +138,11 @@ func (p *Probe) Send(report *mtr.Report) error {
 		return ez.Wrap(op, err)
 	}
 
-	log.Info().Str("source", report.MTR.Source).Msg("Written to InfluxDB")
+	log.Info().
+		Str("destination", report.MTR.Destination).
+		Str("protocol", protocol).
+		Str("source", report.MTR.Source).
+		Msg("Written to InfluxDB")
 
 	return nil
 }

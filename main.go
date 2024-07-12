@@ -70,7 +70,12 @@ func main() {
 
 		// Continuous loop to run the probe indefinitely
 		for {
-			err = probe.Run(c.String("destination"))
+			err = probe.Run(c.String("destination"), "IPv4")
+			if err != nil {
+				log.Error().Err(err).Msg("Probing error")
+			}
+
+			err = probe.Run(c.String("destination"), "IPv6")
 			if err != nil {
 				log.Error().Err(err).Msg("Probing error")
 			}
